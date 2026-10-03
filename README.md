@@ -1,4 +1,4 @@
-# ObsidianGuardLite
+# Obsidian Guard Lite Library
 
 A small, clean **Windows C++17 wrapper around OpenSSL** with exactly three
 classes:
