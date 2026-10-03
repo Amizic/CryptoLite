@@ -1,6 +1,6 @@
-# Obsidian Guard Lite Library
+# ObsidianGuardLite
 
-A small, clean **Windows C++17 wrapper around OpenSSL** with three
+A small, clean **Windows C++17 wrapper around OpenSSL** with exactly three
 classes:
 
 | Class                    | Purpose                          | Underlying OpenSSL primitive     |
@@ -27,15 +27,25 @@ Every function that performs work returns an `int`. **`0` means success**; any
 negative value is an error. `hasKey()`, `hasPublicKey()`, `hasPrivateKey()` and
 `getKey()` are the only exceptions (they are queries, not operations).
 
-| Code | Constant       | Meaning                                            | Used by |
-|------|----------------|----------------------------------------------------|---------|
-| `0`  | `kOk`          | Success                                            | all |
-| `-1` | `kErrNoKey`    | No key available (not generated/loaded/set)        | all |
-| `-2` | `kErrBadArg`   | Invalid argument (wrong key size, oversized input, malformed ciphertext) | all |
-| `-3` | `kErrCrypto`   | OpenSSL / internal crypto error                    | all |
-| `-4` | `kErrAuth`     | Authentication/integrity failure (GCM tag mismatch, wrong key, corrupted data) | `Aes256`, `PostQuantum` |
-| `-5` | `kErrFile`     | File I/O error (cannot open/read/write a key file) | `Rsa4096`, `PostQuantum` |
-| `-6` | `kErrMemory`   | Memory allocation error                            | all |
+The codes are aligned with ObsidianGuard's `CryptoErrorCode` categories, so the
+same number means the same thing in both libraries:
+
+| Code | Constant                | Meaning                                                          | Used by |
+|------|-------------------------|------------------------------------------------------------------|---------|
+| `0`  | `kOk`                   | Success                                                          | all |
+| `-1` | `kErrInvalidArgument`   | Bad input / no key available (wrong key size, oversized or malformed input, missing key) | all |
+| `-2` | `kErrOpenSsl`           | Underlying OpenSSL call failed                                   | all |
+| `-3` | `kErrAuth`              | Authentication/integrity failure (GCM tag mismatch, wrong key, corrupted data) | `Aes256`, `PostQuantum` |
+| `-4` | `kErrUnavailable`       | Algorithm not available in this OpenSSL build (e.g. no ML-KEM)   | `PostQuantum` |
+| `-5` | `kErrInternal`          | Unexpected internal failure                                      | `Rsa4096`, `PostQuantum` |
+| `-6` | `kErrFile`              | File I/O error (cannot open/read/write a key file) — ObsidianGuardLite-only extension | `Rsa4096`, `PostQuantum` |
+
+> **Breaking change:** earlier versions used a different numbering
+> (`kErrNoKey=-1`, `kErrBadArg=-2`, `kErrCrypto=-3`, `kErrAuth=-4`,
+> `kErrFile=-5`, `kErrMemory=-6`). The mapping is:
+> `kErrNoKey` / `kErrBadArg` → `kErrInvalidArgument` (-1),
+> `kErrCrypto` / `kErrMemory` → `kErrOpenSsl` (-2),
+> `kErrAuth` → `kErrAuth` (-3), `kErrFile` → `kErrFile` (-6).
 
 The same numeric values are exposed as `static constexpr int` members on each
 class (e.g. `Aes256::kErrAuth`), so you can write readable checks:
@@ -44,6 +54,25 @@ class (e.g. `Aes256::kErrAuth`), so you can write readable checks:
 int rc = aes.decrypt(cipher, plain);
 if (rc == ObsidianGuardLite::Aes256::kErrAuth) { /* wrong key or tampered data */ }
 ```
+
+---
+
+## Thread safety
+
+All three classes are fully thread-safe: every method locks internally, and a
+single instance may be shared freely between threads — including concurrent
+key changes.
+
+* `Aes256::encrypt()` / `decrypt()` copy the 32-byte key under the lock and
+  run the crypto on that snapshot.
+* `Rsa4096` and `PostQuantum` take an up-referenced `EVP_PKEY` snapshot under
+  the lock, so the key stays valid even while `generateKeyPair()` / `load*()`
+  replaces the instance's key.
+* `getKey()` returns a copy for the same reason.
+
+A call therefore either sees the old key or the new one, never a torn state.
+The only remaining rule is the usual one: do not destroy an object while
+another thread is still using it.
 
 ---
 
@@ -61,8 +90,10 @@ ObsidianGuardLite/
 │   ├── Aes256.cpp
 │   ├── Rsa4096.cpp
 │   └── PostQuantum.cpp
+├── scripts/
+│   └── build.ps1           # one-command build (+ -Test runs ctest)
 └── tests/
-    └── test_main.cpp       # unit tests
+    └── test_main.cpp       # unit tests (CTest)
 ```
 
 ---
@@ -70,7 +101,8 @@ ObsidianGuardLite/
 ## Class reference
 
 All classes live in the `ObsidianGuardLite` namespace. They are **non-copyable and
-non-movable** because each one exclusively owns its key material.
+non-movable** because each one exclusively owns its key material, and they are
+**thread-safe**: all methods lock internally (see "Thread safety" above).
 
 ### `ObsidianGuardLite::Aes256` — AES-256-GCM
 
@@ -88,6 +120,7 @@ The 256-bit key lives **only in memory** and is never written to disk.
 
 | Variable | Type                        | Meaning                       |
 |----------|-----------------------------|-------------------------------|
+| `mutex_`  | `mutable std::mutex`       | guards `key_` and `hasKey_`   |
 | `key_`   | `std::vector<unsigned char>`| the 32-byte AES key (memory)  |
 | `hasKey_`| `bool`                      | whether a key has been set    |
 
@@ -96,9 +129,9 @@ The 256-bit key lives **only in memory** and is never written to disk.
 | Function | Returns | Description |
 |----------|---------|-------------|
 | `generateKey()` | `int` | Generate a fresh random 256-bit key (`0` on success). |
-| `setKey(key)` | `int` | Set the key from a 32-byte vector (`-2` if not 32 bytes). |
+| `setKey(key)` | `int` | Set the key from a 32-byte vector (`-1` if not 32 bytes). |
 | `hasKey()` | `bool` | `true` once a key is available. |
-| `getKey()` | `const vector&` | Read-only access to the key bytes. |
+| `getKey()` | `vector` | Copy of the key bytes (by value, thread-safe snapshot). |
 | `encrypt(in, out)` | `int` | Encrypt `in` into `out`. |
 | `decrypt(in, out)` | `int` | Decrypt `in` into `out`. |
 
@@ -121,6 +154,7 @@ standard **PEM** format. A 4096-bit key encrypts at most **446 bytes** per call.
 
 | Variable      | Type       | Meaning                          |
 |---------------|------------|----------------------------------|
+| `mutex_`      | `mutable std::mutex` | guards `pkey_` and `hasPrivate_` |
 | `pkey_`       | `EVP_PKEY*`| the OpenSSL key handle           |
 | `hasPrivate_` | `bool`     | whether a private key is present |
 
@@ -151,12 +185,14 @@ then uses that secret as an AES-256-GCM key to encrypt the message.
 
 | Variable      | Type        | Meaning                          |
 |---------------|-------------|----------------------------------|
+| `mutex_`      | `mutable std::mutex` | guards `pkey_` and `hasPrivate_` |
 | `pkey_`       | `EVP_PKEY*` | the OpenSSL key handle           |
 | `hasPrivate_` | `bool`      | whether a private key is present |
 
-**Functions** — same shape as `Rsa4096`: `generateKeyPair()`,
-`savePublicKey()`/`loadPublicKey()`, `savePrivateKey()`/`loadPrivateKey()`,
-`hasPublicKey()`/`hasPrivateKey()`, `encrypt()`, `decrypt()`.
+**Functions** — same shape as `Rsa4096`: `generateKeyPair()` (returns `-4` when
+this OpenSSL build has no ML-KEM support), `savePublicKey()`/`loadPublicKey()`,
+`savePrivateKey()`/`loadPrivateKey()`, `hasPublicKey()`/`hasPrivateKey()`,
+`encrypt()`, `decrypt()`.
 
 **Ciphertext layout** (binary):
 
@@ -205,12 +241,27 @@ header.
 ```bat
 cmake --build build
 build\ObsidianGuardLite_tests.exe
+ctest --test-dir build --output-on-failure
+```
+
+The suite covers round trips, every error code with its exact value, file I/O
+failures, and multithreaded stress tests that hammer one shared instance.
+When run directly in a terminal (or double-clicked), the test binary pauses at
+the end so the window stays open while you read the results; CTest and
+redirected runs skip the pause automatically, and setting
+`OBSIDIAN_GUARD_NO_PAUSE=1` forces it off.
+
+A one-command helper builds with the in-workspace toolchain and can run the
+tests right after:
+
+```bat
+powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Linkage static -Test
+powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Linkage shared -Test
 ```
 
 The build in this workspace links OpenSSL **statically**, so no OpenSSL DLL is
-needed at runtime. Put `tools\mingw64\bin` on `PATH` (or copy the MinGW runtime
-DLLs next to the executable) so the test can find `libstdc++-6.dll` etc.
-(Or run `ctest --test-dir build --output-on-failure`.)
+needed at runtime. The build copies the MinGW runtime DLLs next to the test
+executable automatically.
 
 ---
 
@@ -256,7 +307,7 @@ target_link_libraries(my_app PRIVATE ObsidianGuardLite::ObsidianGuardLite)
 ## Security notes
 
 - **AES** uses AES-256-**GCM** (confidentiality + integrity); tampered data is
-  rejected with `-4`.
+  rejected with `-3`.
 - **RSA** uses **OAEP** with SHA-256/MGF1-SHA256 (not the weaker PKCS#1 v1.5).
 - **Post-quantum** uses **ML-KEM-768** (FIPS 203 / NIST category 3) plus
   AES-256-GCM. The 32-byte shared secret is used directly as the AES key.

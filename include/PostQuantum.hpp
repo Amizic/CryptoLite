@@ -9,6 +9,12 @@
 //   [ AES-256-GCM ciphertext: 12-byte IV ][ data ][ 16-byte tag ]
 //
 // Requires OpenSSL 3.5.0 or newer. Keys are stored in standard PEM format.
+//
+// Thread safety: every method locks internally, so a single instance may be
+// shared freely between threads. Crypto calls take an up-referenced snapshot
+// of the key under the lock and run on that snapshot, so concurrent
+// generateKeyPair()/load*() calls cannot race; a call either sees the old key
+// or the new one, never a torn state.
 #ifndef OBSIDIAN_GUARD_LITE_POSTQUANTUM_HPP
 #define OBSIDIAN_GUARD_LITE_POSTQUANTUM_HPP
 
@@ -24,6 +30,7 @@
 #endif
 
 #include <cstddef>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -37,14 +44,15 @@ public:
     // The ML-KEM parameter set (NIST security category 3).
     static constexpr const char* kAlgorithm = "ML-KEM-768";
 
-    // Return codes (see README for the full table).
-    static constexpr int kOk        = 0;
-    static constexpr int kErrNoKey  = -1;
-    static constexpr int kErrBadArg = -2;
-    static constexpr int kErrCrypto = -3;
-    static constexpr int kErrAuth   = -4;
-    static constexpr int kErrFile   = -5;
-    static constexpr int kErrMemory = -6;
+    // Return codes, aligned with ObsidianGuard's CryptoErrorCode categories
+    // (see README for the full table):
+    static constexpr int kOk                = 0;  // success
+    static constexpr int kErrInvalidArgument = -1; // bad input / no key available
+    static constexpr int kErrOpenSsl        = -2;  // underlying OpenSSL call failed
+    static constexpr int kErrAuth           = -3;  // tampered data / wrong key
+    static constexpr int kErrUnavailable    = -4;  // algorithm unavailable at runtime
+    static constexpr int kErrInternal       = -5;  // unexpected internal failure
+    static constexpr int kErrFile           = -6;  // file I/O error (Lite-only extension)
 
     PostQuantum();
     ~PostQuantum();
@@ -56,7 +64,8 @@ public:
     PostQuantum& operator=(PostQuantum&&) = delete;
 
     // ---- key management -------------------------------------------------
-    // Generate a new ML-KEM-768 key pair. Returns kOk (0) on success.
+    // Generate a new ML-KEM-768 key pair. Returns kOk (0) on success, or
+    // kErrUnavailable (-4) when this OpenSSL build has no ML-KEM support.
     int generateKeyPair();
     // Save/load the public key in PEM format.
     int savePublicKey(const std::string& path) const;
@@ -75,7 +84,7 @@ public:
                 std::vector<unsigned char>& plaintext) const;
 
 private:
-    void freeKey();
+    mutable std::mutex mutex_;  // guards pkey_ and hasPrivate_
 
     EVP_PKEY* pkey_;
     bool hasPrivate_;

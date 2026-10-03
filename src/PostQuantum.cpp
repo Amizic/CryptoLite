@@ -7,6 +7,8 @@
 #include <openssl/pem.h>
 
 #include <cstdint>
+#include <memory>
+#include <mutex>
 
 // ML-KEM (and the EVP_PKEY_encapsulate/decapsulate API) require OpenSSL 3.5.
 #if OPENSSL_VERSION_NUMBER < 0x30500000L
@@ -14,28 +16,38 @@
 #endif
 
 namespace ObsidianGuardLite {
+namespace {
+
+struct PkeyDeleter {
+    void operator()(EVP_PKEY* p) const noexcept {
+        EVP_PKEY_free(p);
+    }
+};
+
+using PkeyPtr = std::unique_ptr<EVP_PKEY, PkeyDeleter>;
+
+} // namespace
 
 PostQuantum::PostQuantum() : pkey_(nullptr), hasPrivate_(false) {}
 
 PostQuantum::~PostQuantum() {
-    freeKey();
-}
-
-void PostQuantum::freeKey() {
+    // No locking: no member function may run concurrently with destruction.
     EVP_PKEY_free(pkey_);
     pkey_ = nullptr;
     hasPrivate_ = false;
 }
 
 int PostQuantum::generateKeyPair() {
-    freeKey();
-
+    // Key generation is done OUTSIDE the lock, then swapped atomically.
+    // Creating the context by name is also the availability probe: it fails
+    // when this OpenSSL build has no ML-KEM support.
     EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_from_name(nullptr, kAlgorithm, nullptr);
     if (ctx == nullptr) {
-        return kErrMemory;
+        return kErrUnavailable;
     }
 
-    int rc = kErrCrypto;
+    PkeyPtr newKey;
+    int rc = kErrOpenSsl;
     do {
         if (EVP_PKEY_keygen_init(ctx) != 1) {
             break;
@@ -44,37 +56,61 @@ int PostQuantum::generateKeyPair() {
         if (EVP_PKEY_keygen(ctx, &pkey) != 1) {
             break;
         }
-        pkey_ = pkey;
-        hasPrivate_ = true;
+        newKey.reset(pkey);
         rc = kOk;
     } while (false);
-
     EVP_PKEY_CTX_free(ctx);
-    return rc;
+    if (rc != kOk) {
+        return rc;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    EVP_PKEY_free(pkey_);
+    pkey_ = newKey.release();
+    hasPrivate_ = true;
+    return kOk;
 }
 
 int PostQuantum::savePublicKey(const std::string& path) const {
-    if (pkey_ == nullptr) {
-        return kErrNoKey;
+    PkeyPtr snapshot;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (pkey_ == nullptr) {
+            return kErrInvalidArgument;
+        }
+        if (EVP_PKEY_up_ref(pkey_) != 1) {
+            return kErrInternal;
+        }
+        snapshot.reset(pkey_);
     }
+
     BIO* bio = BIO_new_file(path.c_str(), "wb");
     if (bio == nullptr) {
         return kErrFile;
     }
-    const int rc = (PEM_write_bio_PUBKEY(bio, pkey_) == 1) ? kOk : kErrFile;
+    const int rc = (PEM_write_bio_PUBKEY(bio, snapshot.get()) == 1) ? kOk : kErrFile;
     BIO_free(bio);
     return rc;
 }
 
 int PostQuantum::savePrivateKey(const std::string& path) const {
-    if (pkey_ == nullptr) {
-        return kErrNoKey;
+    PkeyPtr snapshot;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (pkey_ == nullptr || !hasPrivate_) {
+            return kErrInvalidArgument;
+        }
+        if (EVP_PKEY_up_ref(pkey_) != 1) {
+            return kErrInternal;
+        }
+        snapshot.reset(pkey_);
     }
+
     BIO* bio = BIO_new_file(path.c_str(), "wb");
     if (bio == nullptr) {
         return kErrFile;
     }
-    const int rc = (PEM_write_bio_PrivateKey(bio, pkey_, nullptr,
+    const int rc = (PEM_write_bio_PrivateKey(bio, snapshot.get(), nullptr,
                                              nullptr, 0, nullptr, nullptr) == 1)
                        ? kOk
                        : kErrFile;
@@ -83,6 +119,7 @@ int PostQuantum::savePrivateKey(const std::string& path) const {
 }
 
 int PostQuantum::loadPublicKey(const std::string& path) {
+    // Parsing is done outside the lock; only the pointer swap is locked.
     BIO* bio = BIO_new_file(path.c_str(), "rb");
     if (bio == nullptr) {
         return kErrFile;
@@ -92,7 +129,9 @@ int PostQuantum::loadPublicKey(const std::string& path) {
     if (pkey == nullptr) {
         return kErrFile;
     }
-    freeKey();
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    EVP_PKEY_free(pkey_);
     pkey_ = pkey;
     hasPrivate_ = false;
     return kOk;
@@ -108,38 +147,53 @@ int PostQuantum::loadPrivateKey(const std::string& path) {
     if (pkey == nullptr) {
         return kErrFile;
     }
-    freeKey();
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    EVP_PKEY_free(pkey_);
     pkey_ = pkey;
     hasPrivate_ = true;
     return kOk;
 }
 
 bool PostQuantum::hasPublicKey() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     return pkey_ != nullptr;
 }
 
 bool PostQuantum::hasPrivateKey() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     return hasPrivate_;
 }
 
 int PostQuantum::encrypt(const std::vector<unsigned char>& plaintext,
                          std::vector<unsigned char>& ciphertext) const {
     ciphertext.clear();
-    if (pkey_ == nullptr) {
-        return kErrNoKey;
+
+    // Up-referenced snapshot: the key stays alive and immutable even if a
+    // concurrent generateKeyPair()/load*() replaces the instance's pointer.
+    PkeyPtr key;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (pkey_ == nullptr) {
+            return kErrInvalidArgument;
+        }
+        if (EVP_PKEY_up_ref(pkey_) != 1) {
+            return kErrInternal;
+        }
+        key.reset(pkey_);
     }
 
     // 1. Encapsulate: produce a KEM ciphertext and a 32-byte shared secret.
     std::vector<unsigned char> kemCt;
     std::vector<unsigned char> secret;
     {
-        EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(pkey_, nullptr);
+        EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(key.get(), nullptr);
         if (ctx == nullptr) {
-            return kErrMemory;
+            return kErrOpenSsl;
         }
         std::size_t ctLen = 0;
         std::size_t secretLen = 0;
-        int rc = kErrCrypto;
+        int rc = kErrOpenSsl;
         do {
             if (EVP_PKEY_encapsulate_init(ctx, nullptr) != 1) {
                 break;
@@ -190,11 +244,21 @@ int PostQuantum::encrypt(const std::vector<unsigned char>& plaintext,
 int PostQuantum::decrypt(const std::vector<unsigned char>& ciphertext,
                          std::vector<unsigned char>& plaintext) const {
     plaintext.clear();
-    if (pkey_ == nullptr || !hasPrivate_) {
-        return kErrNoKey;
+
+    PkeyPtr key;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (pkey_ == nullptr || !hasPrivate_) {
+            return kErrInvalidArgument;
+        }
+        if (EVP_PKEY_up_ref(pkey_) != 1) {
+            return kErrInternal;
+        }
+        key.reset(pkey_);
     }
+
     if (ciphertext.size() < 4 + Aes256::kIvSize + Aes256::kTagSize) {
-        return kErrBadArg;
+        return kErrInvalidArgument;
     }
 
     // 1. Parse: [4-byte KEM length][KEM ciphertext][AES ciphertext].
@@ -203,7 +267,7 @@ int PostQuantum::decrypt(const std::vector<unsigned char>& ciphertext,
         kemLen |= static_cast<std::uint32_t>(ciphertext[i]) << (8 * i);
     }
     if (ciphertext.size() < 4 + kemLen + Aes256::kIvSize + Aes256::kTagSize) {
-        return kErrBadArg;
+        return kErrInvalidArgument;
     }
     std::vector<unsigned char> kemCt(ciphertext.begin() + 4,
                                      ciphertext.begin() + 4 + kemLen);
@@ -213,12 +277,12 @@ int PostQuantum::decrypt(const std::vector<unsigned char>& ciphertext,
     // 2. Decapsulate to recover the shared secret.
     std::vector<unsigned char> secret;
     {
-        EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(pkey_, nullptr);
+        EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(key.get(), nullptr);
         if (ctx == nullptr) {
-            return kErrMemory;
+            return kErrOpenSsl;
         }
         std::size_t secretLen = 0;
-        int rc = kErrCrypto;
+        int rc = kErrOpenSsl;
         do {
             if (EVP_PKEY_decapsulate_init(ctx, nullptr) != 1) {
                 break;

@@ -4,6 +4,12 @@
 // disk: generate a random key with generateKey(), or supply one with setKey().
 //
 // Ciphertext layout (binary): [ 12-byte IV ][ ciphertext ][ 16-byte GCM tag ]
+//
+// Thread safety: every method locks internally, so a single instance may be
+// shared freely between threads. encrypt()/decrypt() snapshot the key under
+// the lock and run the crypto on that snapshot, so even concurrent
+// generateKey()/setKey() calls cannot race; a call either sees the old key
+// or the new one, never a torn state.
 #ifndef OBSIDIAN_GUARD_LITE_AES256_HPP
 #define OBSIDIAN_GUARD_LITE_AES256_HPP
 
@@ -19,6 +25,7 @@
 #endif
 
 #include <cstddef>
+#include <mutex>
 #include <vector>
 
 namespace ObsidianGuardLite {
@@ -29,13 +36,15 @@ public:
     static constexpr std::size_t kIvSize  = 12; // bytes = 96 bits (GCM)
     static constexpr std::size_t kTagSize = 16; // bytes = 128 bits
 
-    // Return codes (see README for the full table).
-    static constexpr int kOk        = 0;
-    static constexpr int kErrNoKey  = -1;
-    static constexpr int kErrBadArg = -2;
-    static constexpr int kErrCrypto = -3;
-    static constexpr int kErrAuth   = -4;
-    static constexpr int kErrMemory = -6;
+    // Return codes, aligned with ObsidianGuard's CryptoErrorCode categories
+    // (see README for the full table):
+    static constexpr int kOk                = 0;  // success
+    static constexpr int kErrInvalidArgument = -1; // bad input / no key available
+    static constexpr int kErrOpenSsl        = -2;  // underlying OpenSSL call failed
+    static constexpr int kErrAuth           = -3;  // tampered data / wrong key
+    static constexpr int kErrUnavailable    = -4;  // algorithm unavailable at runtime
+    static constexpr int kErrInternal       = -5;  // unexpected internal failure
+    static constexpr int kErrFile           = -6;  // file I/O error (Lite-only extension)
 
     Aes256();
     ~Aes256();
@@ -49,13 +58,14 @@ public:
     // ---- key management (in memory only) --------------------------------
     // Generate a fresh random 256-bit key. Returns kOk (0) on success.
     int generateKey();
-    // Set the key from an existing 32-byte buffer. Returns kErrBadArg (-2) if
-    // the buffer is not exactly 32 bytes.
+    // Set the key from an existing 32-byte buffer. Returns
+    // kErrInvalidArgument (-1) if the buffer is not exactly 32 bytes.
     int setKey(const std::vector<unsigned char>& key);
     // True once a key has been generated or set.
     bool hasKey() const;
-    // Direct (read-only) access to the stored key bytes.
-    const std::vector<unsigned char>& getKey() const;
+    // Copy of the stored key bytes (returned by value so it is a consistent
+    // snapshot even when other threads keep using the object).
+    std::vector<unsigned char> getKey() const;
 
     // ---- encryption / decryption ---------------------------------------
     int encrypt(const std::vector<unsigned char>& plaintext,
@@ -64,8 +74,9 @@ public:
                 std::vector<unsigned char>& plaintext) const;
 
 private:
-    void clearKey();
+    void clearKey();  // call only with mutex_ held (or during destruction)
 
+    mutable std::mutex mutex_;  // guards key_ and hasKey_
     std::vector<unsigned char> key_;
     bool hasKey_;
 };

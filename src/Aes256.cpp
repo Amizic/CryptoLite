@@ -4,14 +4,19 @@
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 
+#include <mutex>
+
 namespace ObsidianGuardLite {
 
 Aes256::Aes256() : key_(kKeySize, 0), hasKey_(false) {}
 
 Aes256::~Aes256() {
+    // No locking: no member function may run concurrently with destruction.
     clearKey();
 }
 
+// Call only with mutex_ held (or during destruction, where no other thread
+// may touch the object anyway).
 void Aes256::clearKey() {
     if (!key_.empty()) {
         OPENSSL_cleanse(key_.data(), key_.size());
@@ -21,9 +26,10 @@ void Aes256::clearKey() {
 }
 
 int Aes256::generateKey() {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (RAND_bytes(key_.data(), static_cast<int>(kKeySize)) != 1) {
         clearKey();
-        return kErrCrypto;
+        return kErrOpenSsl;
     }
     hasKey_ = true;
     return kOk;
@@ -31,43 +37,54 @@ int Aes256::generateKey() {
 
 int Aes256::setKey(const std::vector<unsigned char>& key) {
     if (key.size() != kKeySize) {
-        return kErrBadArg;
+        return kErrInvalidArgument;
     }
+    std::lock_guard<std::mutex> lock(mutex_);
     key_ = key;
     hasKey_ = true;
     return kOk;
 }
 
 bool Aes256::hasKey() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     return hasKey_;
 }
 
-const std::vector<unsigned char>& Aes256::getKey() const {
-    return key_;
+std::vector<unsigned char> Aes256::getKey() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return key_;  // copy: a consistent snapshot, safe after unlock
 }
 
 int Aes256::encrypt(const std::vector<unsigned char>& plaintext,
                     std::vector<unsigned char>& ciphertext) const {
     ciphertext.clear();
-    if (!hasKey_) {
-        return kErrNoKey;
+
+    // Snapshot the key under the lock so concurrent generateKey()/setKey()
+    // cannot race with the crypto below.
+    std::vector<unsigned char> key;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!hasKey_) {
+            return kErrInvalidArgument;
+        }
+        key = key_;
     }
 
     std::vector<unsigned char> iv(kIvSize, 0);
     if (RAND_bytes(iv.data(), static_cast<int>(kIvSize)) != 1) {
-        return kErrCrypto;
+        return kErrOpenSsl;
     }
 
     EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
     if (ctx == nullptr) {
-        return kErrMemory;
+        return kErrOpenSsl;
     }
 
     std::vector<unsigned char> ct(plaintext.size() + kTagSize, 0);
     std::vector<unsigned char> tag(kTagSize, 0);
     int outLen = 0;
     int finalLen = 0;
-    int rc = kErrCrypto;
+    int rc = kErrOpenSsl;
 
     do {
         if (EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr) != 1) {
@@ -77,7 +94,7 @@ int Aes256::encrypt(const std::vector<unsigned char>& plaintext,
                                 static_cast<int>(kIvSize), nullptr) != 1) {
             break;
         }
-        if (EVP_EncryptInit_ex(ctx, nullptr, nullptr, key_.data(), iv.data()) != 1) {
+        if (EVP_EncryptInit_ex(ctx, nullptr, nullptr, key.data(), iv.data()) != 1) {
             break;
         }
         if (!plaintext.empty() &&
@@ -112,11 +129,19 @@ int Aes256::encrypt(const std::vector<unsigned char>& plaintext,
 int Aes256::decrypt(const std::vector<unsigned char>& ciphertext,
                     std::vector<unsigned char>& plaintext) const {
     plaintext.clear();
-    if (!hasKey_) {
-        return kErrNoKey;
+
+    // Snapshot the key under the lock (see encrypt()).
+    std::vector<unsigned char> key;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!hasKey_) {
+            return kErrInvalidArgument;
+        }
+        key = key_;
     }
+
     if (ciphertext.size() < kIvSize + kTagSize) {
-        return kErrBadArg;
+        return kErrInvalidArgument;
     }
 
     const unsigned char* iv = ciphertext.data();
@@ -126,13 +151,13 @@ int Aes256::decrypt(const std::vector<unsigned char>& ciphertext,
 
     EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
     if (ctx == nullptr) {
-        return kErrMemory;
+        return kErrOpenSsl;
     }
 
     std::vector<unsigned char> out(ctLen + kTagSize, 0);
     int outLen = 0;
     int finalLen = 0;
-    int rc = kErrCrypto;
+    int rc = kErrOpenSsl;
 
     do {
         if (EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr) != 1) {
@@ -142,7 +167,7 @@ int Aes256::decrypt(const std::vector<unsigned char>& ciphertext,
                                 static_cast<int>(kIvSize), nullptr) != 1) {
             break;
         }
-        if (EVP_DecryptInit_ex(ctx, nullptr, nullptr, key_.data(), iv) != 1) {
+        if (EVP_DecryptInit_ex(ctx, nullptr, nullptr, key.data(), iv) != 1) {
             break;
         }
         if (ctLen > 0 &&
@@ -166,7 +191,7 @@ int Aes256::decrypt(const std::vector<unsigned char>& ciphertext,
 
     EVP_CIPHER_CTX_free(ctx);
     if (rc != kOk) {
-        plaintext.clear();
+        plaintext.clear();  // no plaintext-derived bytes escape on failure
     }
     return rc;
 }

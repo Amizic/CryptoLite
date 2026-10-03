@@ -74,5 +74,31 @@ if(OBSIDIAN_GUARD_LITE_BUILD_TESTS)
     enable_testing()
     add_executable(ObsidianGuardLite_tests tests/test_main.cpp)
     target_link_libraries(ObsidianGuardLite_tests PRIVATE ObsidianGuardLite::ObsidianGuardLite)
+
+    if(MINGW)
+        # Copy the MinGW runtime DLLs next to the test executable so it runs
+        # without extra PATH configuration.
+        get_filename_component(_OBSIDIAN_GUARD_LITE_MINGW_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        set(_OBSIDIAN_GUARD_LITE_MINGW_RUNTIME_DLLS)
+        foreach(_runtimeDll IN ITEMS libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll)
+            if(EXISTS "${_OBSIDIAN_GUARD_LITE_MINGW_BIN_DIR}/${_runtimeDll}")
+                list(APPEND _OBSIDIAN_GUARD_LITE_MINGW_RUNTIME_DLLS "${_OBSIDIAN_GUARD_LITE_MINGW_BIN_DIR}/${_runtimeDll}")
+            endif()
+        endforeach()
+        if(_OBSIDIAN_GUARD_LITE_MINGW_RUNTIME_DLLS)
+            add_custom_command(TARGET ObsidianGuardLite_tests POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_OBSIDIAN_GUARD_LITE_MINGW_RUNTIME_DLLS}
+                        $<TARGET_FILE_DIR:ObsidianGuardLite_tests>
+                COMMENT "Copying MinGW runtime DLLs next to ObsidianGuardLite_tests")
+        endif()
+    endif()
+
     add_test(NAME ObsidianGuardLite_tests COMMAND ObsidianGuardLite_tests)
+    # RSA-4096 key generation is intentionally slow; be generous on CI.
+    # The test binary pauses at the end when run interactively; disable the
+    # pause under CTest so automated runs never wait for a keypress.
+    set_tests_properties(ObsidianGuardLite_tests PROPERTIES
+        TIMEOUT 600
+        ENVIRONMENT "OBSIDIAN_GUARD_NO_PAUSE=1"
+    )
 endif()

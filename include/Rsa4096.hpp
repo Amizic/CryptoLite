@@ -3,6 +3,12 @@
 // Encrypt with the public key, decrypt with the private key. Keys are stored in
 // standard PEM format. A 4096-bit key can encrypt at most 446 bytes per call
 // (OAEP-SHA256 overhead), so use RSA to wrap a symmetric key, not bulk data.
+//
+// Thread safety: every method locks internally, so a single instance may be
+// shared freely between threads. Crypto calls take an up-referenced snapshot
+// of the key under the lock and run on that snapshot, so concurrent
+// generateKeyPair()/load*() calls cannot race; a call either sees the old key
+// or the new one, never a torn state.
 #ifndef OBSIDIAN_GUARD_LITE_RSA4096_HPP
 #define OBSIDIAN_GUARD_LITE_RSA4096_HPP
 
@@ -18,6 +24,7 @@
 #endif
 
 #include <cstddef>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -32,13 +39,15 @@ public:
     static constexpr std::size_t kModulusSize = kBits / 8;                 // 512 bytes
     static constexpr std::size_t kMaxPlaintext = kModulusSize - 2 * 32 - 2; // 446 bytes
 
-    // Return codes (see README for the full table).
-    static constexpr int kOk        = 0;
-    static constexpr int kErrNoKey  = -1;
-    static constexpr int kErrBadArg = -2;
-    static constexpr int kErrCrypto = -3;
-    static constexpr int kErrFile   = -5;
-    static constexpr int kErrMemory = -6;
+    // Return codes, aligned with ObsidianGuard's CryptoErrorCode categories
+    // (see README for the full table):
+    static constexpr int kOk                = 0;  // success
+    static constexpr int kErrInvalidArgument = -1; // bad input / no key available
+    static constexpr int kErrOpenSsl        = -2;  // underlying OpenSSL call failed
+    static constexpr int kErrAuth           = -3;  // tampered data / wrong key
+    static constexpr int kErrUnavailable    = -4;  // algorithm unavailable at runtime
+    static constexpr int kErrInternal       = -5;  // unexpected internal failure
+    static constexpr int kErrFile           = -6;  // file I/O error (Lite-only extension)
 
     Rsa4096();
     ~Rsa4096();
@@ -69,7 +78,7 @@ public:
                 std::vector<unsigned char>& plaintext) const;
 
 private:
-    void freeKey();
+    mutable std::mutex mutex_;  // guards pkey_ and hasPrivate_
 
     EVP_PKEY* pkey_;
     bool hasPrivate_;
