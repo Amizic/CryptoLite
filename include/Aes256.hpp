@@ -10,17 +10,17 @@
 // the lock and run the crypto on that snapshot, so even concurrent
 // generateKey()/setKey() calls cannot race; a call either sees the old key
 // or the new one, never a torn state.
-#ifndef OBSIDIAN_GUARD_LITE_AES256_HPP
-#define OBSIDIAN_GUARD_LITE_AES256_HPP
+#ifndef CRYPTO_LITE_AES256_HPP
+#define CRYPTO_LITE_AES256_HPP
 
 // DLL import/export macro (Windows).
-#ifndef OBSIDIAN_GUARD_LITE_API
-    #ifdef OBSIDIAN_GUARD_LITE_STATIC
-        #define OBSIDIAN_GUARD_LITE_API
-    #elif defined(OBSIDIAN_GUARD_LITE_EXPORTS)
-        #define OBSIDIAN_GUARD_LITE_API __declspec(dllexport)
+#ifndef CRYPTO_LITE_API
+    #ifdef CRYPTO_LITE_STATIC
+        #define CRYPTO_LITE_API
+    #elif defined(CRYPTO_LITE_EXPORTS)
+        #define CRYPTO_LITE_API __declspec(dllexport)
     #else
-        #define OBSIDIAN_GUARD_LITE_API __declspec(dllimport)
+        #define CRYPTO_LITE_API __declspec(dllimport)
     #endif
 #endif
 
@@ -28,15 +28,15 @@
 #include <mutex>
 #include <vector>
 
-namespace ObsidianGuardLite {
+namespace CryptoLite {
 
-class OBSIDIAN_GUARD_LITE_API Aes256 {
+class CRYPTO_LITE_API Aes256 {
 public:
     static constexpr std::size_t kKeySize = 32; // bytes = 256 bits
     static constexpr std::size_t kIvSize  = 12; // bytes = 96 bits (GCM)
     static constexpr std::size_t kTagSize = 16; // bytes = 128 bits
 
-    // Return codes, aligned with ObsidianGuard's CryptoErrorCode categories
+    // Return codes, aligned with Crypto's CryptoErrorCode categories
     // (see README for the full table):
     static constexpr int kOk                = 0;  // success
     static constexpr int kErrInvalidArgument = -1; // bad input / no key available
@@ -92,6 +92,6 @@ private:
     bool hasKey_;
 };
 
-} // namespace ObsidianGuardLite
+} // namespace CryptoLite
 
-#endif // OBSIDIAN_GUARD_LITE_AES256_HPP
+#endif // CRYPTO_LITE_AES256_HPP

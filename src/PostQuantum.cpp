@@ -15,7 +15,7 @@
     #error "PostQuantum requires OpenSSL 3.5.0 or newer for ML-KEM support."
 #endif
 
-namespace ObsidianGuardLite {
+namespace CryptoLite {
 namespace {
 
 struct PkeyDeleter {
@@ -315,4 +315,4 @@ int PostQuantum::decrypt(const std::vector<unsigned char>& ciphertext,
     return aes.decrypt(sym, plaintext);
 }
 
-} // namespace ObsidianGuardLite
+} // namespace CryptoLite

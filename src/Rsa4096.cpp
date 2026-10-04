@@ -7,7 +7,7 @@
 #include <memory>
 #include <mutex>
 
-namespace ObsidianGuardLite {
+namespace CryptoLite {
 namespace {
 
 struct PkeyDeleter {
@@ -280,4 +280,4 @@ int Rsa4096::decrypt(const std::vector<unsigned char>& ciphertext,
     return rc;
 }
 
-} // namespace ObsidianGuardLite
+} // namespace CryptoLite

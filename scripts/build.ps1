@@ -1,5 +1,5 @@
 <#
-ObsidianGuardLite build helper.
+CryptoLite build helper.
 Builds the project with the local, in-workspace toolchain (tools\mingw64) and
 the local OpenSSL installation (tools\openssl-install).
 
@@ -16,7 +16,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$projectRoot = Split-Path -Parent $PSScriptRoot   # .../ObsidianGuardLite
+$projectRoot = Split-Path -Parent $PSScriptRoot   # .../CryptoLite
 $toolsRoot   = Join-Path $projectRoot "..\tools"  # .../tools
 
 if (-not (Test-Path $toolsRoot)) {
@@ -73,10 +73,10 @@ if ($LASTEXITCODE -ne 0) { throw "cmake build failed (exit $LASTEXITCODE)" }
 
 if ($Test) {
     Write-Host ""
-    Write-Host "Running the ObsidianGuardLite test suite (ctest)..."
+    Write-Host "Running the CryptoLite test suite (ctest)..."
     & ctest --test-dir $buildDir --output-on-failure
     if ($LASTEXITCODE -ne 0) { throw "ctest failed (exit $LASTEXITCODE)" }
 }
 
 Write-Host ""
-Write-Host "Build finished: $(Join-Path $buildDir 'ObsidianGuardLite_tests.exe')"
+Write-Host "Build finished: $(Join-Path $buildDir 'CryptoLite_tests.exe')"

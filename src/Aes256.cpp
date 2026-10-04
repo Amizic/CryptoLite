@@ -7,7 +7,7 @@
 #include <climits>
 #include <mutex>
 
-namespace ObsidianGuardLite {
+namespace CryptoLite {
 
 Aes256::Aes256() : key_(kKeySize, 0), hasKey_(false) {}
 
@@ -233,4 +233,4 @@ int Aes256::decrypt(const std::vector<unsigned char>& ciphertext,
     return rc;
 }
 
-} // namespace ObsidianGuardLite
+} // namespace CryptoLite

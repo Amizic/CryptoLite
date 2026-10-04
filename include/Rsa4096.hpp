@@ -9,17 +9,17 @@
 // of the key under the lock and run on that snapshot, so concurrent
 // generateKeyPair()/load*() calls cannot race; a call either sees the old key
 // or the new one, never a torn state.
-#ifndef OBSIDIAN_GUARD_LITE_RSA4096_HPP
-#define OBSIDIAN_GUARD_LITE_RSA4096_HPP
+#ifndef CRYPTO_LITE_RSA4096_HPP
+#define CRYPTO_LITE_RSA4096_HPP
 
 // DLL import/export macro (Windows).
-#ifndef OBSIDIAN_GUARD_LITE_API
-    #ifdef OBSIDIAN_GUARD_LITE_STATIC
-        #define OBSIDIAN_GUARD_LITE_API
-    #elif defined(OBSIDIAN_GUARD_LITE_EXPORTS)
-        #define OBSIDIAN_GUARD_LITE_API __declspec(dllexport)
+#ifndef CRYPTO_LITE_API
+    #ifdef CRYPTO_LITE_STATIC
+        #define CRYPTO_LITE_API
+    #elif defined(CRYPTO_LITE_EXPORTS)
+        #define CRYPTO_LITE_API __declspec(dllexport)
     #else
-        #define OBSIDIAN_GUARD_LITE_API __declspec(dllimport)
+        #define CRYPTO_LITE_API __declspec(dllimport)
     #endif
 #endif
 
@@ -31,15 +31,15 @@
 // Forward declaration so the public header does not need OpenSSL includes.
 typedef struct evp_pkey_st EVP_PKEY;
 
-namespace ObsidianGuardLite {
+namespace CryptoLite {
 
-class OBSIDIAN_GUARD_LITE_API Rsa4096 {
+class CRYPTO_LITE_API Rsa4096 {
 public:
     static constexpr int kBits = 4096;
     static constexpr std::size_t kModulusSize = kBits / 8;                 // 512 bytes
     static constexpr std::size_t kMaxPlaintext = kModulusSize - 2 * 32 - 2; // 446 bytes
 
-    // Return codes, aligned with ObsidianGuard's CryptoErrorCode categories
+    // Return codes, aligned with Crypto's CryptoErrorCode categories
     // (see README for the full table):
     static constexpr int kOk                = 0;  // success
     static constexpr int kErrInvalidArgument = -1; // bad input / no key available
@@ -84,6 +84,6 @@ private:
     bool hasPrivate_;
 };
 
-} // namespace ObsidianGuardLite
+} // namespace CryptoLite
 
-#endif // OBSIDIAN_GUARD_LITE_RSA4096_HPP
+#endif // CRYPTO_LITE_RSA4096_HPP

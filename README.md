@@ -1,13 +1,13 @@
-# ObsidianGuardLite
+# CryptoLite
 
 A small, clean **Windows C++17 wrapper around OpenSSL** with exactly three
 classes:
 
 | Class                    | Purpose                          | Underlying OpenSSL primitive     |
 |--------------------------|----------------------------------|----------------------------------|
-| `ObsidianGuardLite::Aes256`      | Symmetric encryption             | AES-256-GCM (authenticated)      |
-| `ObsidianGuardLite::Rsa4096`     | Asymmetric public-key encryption | RSA-4096 with OAEP-SHA256        |
-| `ObsidianGuardLite::PostQuantum` | Post-quantum hybrid encryption   | ML-KEM-768 (Kyber) + AES-256-GCM |
+| `CryptoLite::Aes256`      | Symmetric encryption             | AES-256-GCM (authenticated)      |
+| `CryptoLite::Rsa4096`     | Asymmetric public-key encryption | RSA-4096 with OAEP-SHA256        |
+| `CryptoLite::PostQuantum` | Post-quantum hybrid encryption   | ML-KEM-768 (Kyber) + AES-256-GCM |
 
 Every class has the same shape of API: generate keys, save/load keys
 (asymmetric only), encrypt, decrypt, and automatic memory cleanup on
@@ -21,21 +21,21 @@ destruction.
 
 ---
 
-## ObsidianGuardLite vs ObsidianGuard
+## CryptoLite vs Crypto
 
 This workspace ships two related libraries. Both implement the same
 algorithms (AES-256-GCM, RSA-4096, ML-KEM-768) with aligned return codes and
 naming. They differ in one design decision — key ownership:
 
-* **ObsidianGuardLite (this one)** — each object **owns its key** (stored
+* **CryptoLite (this one)** — each object **owns its key** (stored
   inside, non-copyable, mutex-protected) and can save/load it to PEM files.
   Self-contained: create one object per client and the key travels with it.
-* **ObsidianGuard** — a **stateless, lock-free engine**: keys are passed in
+* **Crypto** — a **stateless, lock-free engine**: keys are passed in
   as byte vectors per call and live in *your* data structures. Built for
   high-throughput servers managing many clients and threads.
 
 Pick **Lite** for simple, self-contained objects that carry their own keys;
-pick **ObsidianGuard** when your application owns the key lifecycle and
+pick **Crypto** when your application owns the key lifecycle and
 wants zero locking overhead.
 
 ---
@@ -46,7 +46,7 @@ Every function that performs work returns an `int`. **`0` means success**; any
 negative value is an error. `hasKey()`, `hasPublicKey()`, `hasPrivateKey()` and
 `getKey()` are the only exceptions (they are queries, not operations).
 
-The codes are aligned with ObsidianGuard's `kOk` / `kErr*` return codes, so the
+The codes are aligned with Crypto's `kOk` / `kErr*` return codes, so the
 same number means the same thing in both libraries:
 
 | Code | Constant                | Meaning                                                          | Used by |
@@ -57,7 +57,7 @@ same number means the same thing in both libraries:
 | `-3` | `kErrAuth`              | Authentication/integrity failure (GCM tag mismatch, wrong key, corrupted data) | `Aes256`, `PostQuantum` |
 | `-4` | `kErrUnavailable`       | Algorithm not available in this OpenSSL build (e.g. no ML-KEM)   | `PostQuantum` |
 | `-5` | `kErrInternal`          | Unexpected internal failure                                      | `Rsa4096`, `PostQuantum` |
-| `-6` | `kErrFile`              | File I/O error (cannot open/read/write a key file) — ObsidianGuardLite-only extension | `Rsa4096`, `PostQuantum` |
+| `-6` | `kErrFile`              | File I/O error (cannot open/read/write a key file) — CryptoLite-only extension | `Rsa4096`, `PostQuantum` |
 
 > **Breaking change:** earlier versions used a different numbering
 > (`kErrNoKey=-1`, `kErrBadArg=-2`, `kErrCrypto=-3`, `kErrAuth=-4`,
@@ -71,7 +71,7 @@ class (e.g. `Aes256::kErrAuth`), so you can write readable checks:
 
 ```cpp
 int rc = aes.decrypt(cipher, plain);
-if (rc == ObsidianGuardLite::Aes256::kErrAuth) { /* wrong key or tampered data */ }
+if (rc == CryptoLite::Aes256::kErrAuth) { /* wrong key or tampered data */ }
 ```
 
 ---
@@ -98,7 +98,7 @@ another thread is still using it.
 ## Project layout
 
 ```
-ObsidianGuardLite/
+CryptoLite/
 ├── CMakeLists.txt          # build script (static + shared)
 ├── README.md
 ├── include/                # the three headers (.hpp)
@@ -119,11 +119,11 @@ ObsidianGuardLite/
 
 ## Class reference
 
-All classes live in the `ObsidianGuardLite` namespace. They are **non-copyable and
+All classes live in the `CryptoLite` namespace. They are **non-copyable and
 non-movable** because each one exclusively owns its key material, and they are
 **thread-safe**: all methods lock internally (see "Thread safety" above).
 
-### `ObsidianGuardLite::Aes256` — AES-256-GCM
+### `CryptoLite::Aes256` — AES-256-GCM
 
 The 256-bit key lives **only in memory** and is never written to disk.
 
@@ -158,7 +158,7 @@ The 256-bit key lives **only in memory** and is never written to disk.
 
 **Ciphertext layout** (binary): `[ 12-byte IV ][ ciphertext ][ 16-byte tag ]`
 
-### `ObsidianGuardLite::Rsa4096` — RSA-4096 (OAEP-SHA256)
+### `CryptoLite::Rsa4096` — RSA-4096 (OAEP-SHA256)
 
 Encrypt with the public key, decrypt with the private key. Keys are stored in
 standard **PEM** format. A 4096-bit key encrypts at most **446 bytes** per call.
@@ -190,7 +190,7 @@ standard **PEM** format. A 4096-bit key encrypts at most **446 bytes** per call.
 | `encrypt(in, out)` | `int` | Encrypt with the public key. |
 | `decrypt(in, out)` | `int` | Decrypt with the private key. |
 
-### `ObsidianGuardLite::PostQuantum` — ML-KEM-768 (Kyber) + AES-256-GCM
+### `CryptoLite::PostQuantum` — ML-KEM-768 (Kyber) + AES-256-GCM
 
 `encrypt()` runs an ML-KEM-768 key encapsulation to establish a shared secret,
 then uses that secret as an AES-256-GCM key to encrypt the message.
@@ -244,7 +244,7 @@ cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-Produces `libObsidianGuardLite.a` (MinGW) or `ObsidianGuardLite.lib` (MSVC).
+Produces `libCryptoLite.a` (MinGW) or `CryptoLite.lib` (MSVC).
 
 ### 3. Build a **shared** library (DLL)
 
@@ -253,15 +253,15 @@ cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHAR
 cmake --build build
 ```
 
-Produces `libObsidianGuardLite.dll` plus its import library. The `__declspec`
-import/export is handled automatically by the `OBSIDIAN_GUARD_LITE_API` macro in each
+Produces `libCryptoLite.dll` plus its import library. The `__declspec`
+import/export is handled automatically by the `CRYPTO_LITE_API` macro in each
 header.
 
 ### 4. Build and run the tests
 
 ```bat
 cmake --build build
-build\ObsidianGuardLite_tests.exe
+build\CryptoLite_tests.exe
 ctest --test-dir build --output-on-failure
 ```
 
@@ -270,7 +270,7 @@ failures, and multithreaded stress tests that hammer one shared instance.
 When run directly in a terminal (or double-clicked), the test binary pauses at
 the end so the window stays open while you read the results; CTest and
 redirected runs skip the pause automatically, and setting
-`OBSIDIAN_GUARD_NO_PAUSE=1` forces it off.
+`CRYPTO_LITE_NO_PAUSE=1` forces it off.
 
 A one-command helper builds with the in-workspace toolchain and can run the
 tests right after:
@@ -286,14 +286,14 @@ executable automatically.
 
 ---
 
-## Using ObsidianGuardLite in your own project
+## Using CryptoLite in your own project
 
 ```cpp
 #include "Aes256.hpp"
 #include <vector>
 
 int main() {
-    ObsidianGuardLite::Aes256 aes;
+    CryptoLite::Aes256 aes;
     if (aes.generateKey() != 0) return 1;
 
     std::vector<unsigned char> plain = {'h','i'};
@@ -309,18 +309,18 @@ int main() {
 Link statically:
 
 ```bat
-g++ main.cpp -I path\to\ObsidianGuardLite\include -L path\to\lib -lObsidianGuardLite -lcrypto
+g++ main.cpp -I path\to\CryptoLite\include -L path\to\lib -lCryptoLite -lcrypto
 ```
 
-Link against the DLL the same way, then ensure `libObsidianGuardLite.dll` **and** the
+Link against the DLL the same way, then ensure `libCryptoLite.dll` **and** the
 OpenSSL DLL are on `PATH` at runtime.
 
 With CMake:
 
 ```cmake
 find_package(OpenSSL 3.5 REQUIRED)
-add_subdirectory(path/to/ObsidianGuardLite)
-target_link_libraries(my_app PRIVATE ObsidianGuardLite::ObsidianGuardLite)
+add_subdirectory(path/to/CryptoLite)
+target_link_libraries(my_app PRIVATE CryptoLite::CryptoLite)
 ```
 
 ---

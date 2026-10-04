@@ -1,11 +1,11 @@
-// Unit tests for ObsidianGuardLite.
+// Unit tests for CryptoLite.
 //
 // Verifies key generation, save/load (RSA/PQ PEM only), encryption/decryption
 // round-trips, every error return code with its exact value, and thread
 // safety (concurrent use of one shared instance, including concurrent key
 // mutation). No external test framework is required.
 //
-// The return codes are aligned with ObsidianGuard's CryptoErrorCode:
+// The return codes are aligned with Crypto's CryptoErrorCode:
 //   0 = ok, -1 = InvalidArgument, -2 = OpenSslFailure, -3 = AuthFailed,
 //   -4 = Unavailable, -5 = Internal, -6 = kErrFile (Lite-only extension).
 //
@@ -36,21 +36,21 @@
 // ---------------------------------------------------------------------------
 // The aligned error-code scheme is a compile-time contract.
 // ---------------------------------------------------------------------------
-static_assert(ObsidianGuardLite::Aes256::kOk == 0, "kOk must be 0");
-static_assert(ObsidianGuardLite::Aes256::kErrInvalidArgument == -1,
+static_assert(CryptoLite::Aes256::kOk == 0, "kOk must be 0");
+static_assert(CryptoLite::Aes256::kErrInvalidArgument == -1,
               "kErrInvalidArgument must be -1");
-static_assert(ObsidianGuardLite::Aes256::kErrOpenSsl == -2, "kErrOpenSsl must be -2");
-static_assert(ObsidianGuardLite::Aes256::kErrAuth == -3, "kErrAuth must be -3");
-static_assert(ObsidianGuardLite::Aes256::kErrUnavailable == -4,
+static_assert(CryptoLite::Aes256::kErrOpenSsl == -2, "kErrOpenSsl must be -2");
+static_assert(CryptoLite::Aes256::kErrAuth == -3, "kErrAuth must be -3");
+static_assert(CryptoLite::Aes256::kErrUnavailable == -4,
               "kErrUnavailable must be -4");
-static_assert(ObsidianGuardLite::Aes256::kErrInternal == -5, "kErrInternal must be -5");
-static_assert(ObsidianGuardLite::Aes256::kErrFile == -6, "kErrFile must be -6");
+static_assert(CryptoLite::Aes256::kErrInternal == -5, "kErrInternal must be -5");
+static_assert(CryptoLite::Aes256::kErrFile == -6, "kErrFile must be -6");
 // The same values must be exposed by all three classes.
-static_assert(ObsidianGuardLite::Rsa4096::kErrOpenSsl ==
-                  ObsidianGuardLite::Aes256::kErrOpenSsl,
+static_assert(CryptoLite::Rsa4096::kErrOpenSsl ==
+                  CryptoLite::Aes256::kErrOpenSsl,
               "RSA and AES must share the aligned codes");
-static_assert(ObsidianGuardLite::PostQuantum::kErrUnavailable ==
-                  ObsidianGuardLite::Aes256::kErrUnavailable,
+static_assert(CryptoLite::PostQuantum::kErrUnavailable ==
+                  CryptoLite::Aes256::kErrUnavailable,
               "PostQuantum and AES must share the aligned codes");
 
 static int g_checks = 0;
@@ -75,7 +75,7 @@ std::filesystem::path makeTempDir() {
                          .time_since_epoch()
                          .count();
     auto path = std::filesystem::temp_directory_path() /
-                ("ObsidianGuardLite_test_" + std::to_string(now));
+                ("CryptoLite_test_" + std::to_string(now));
     std::filesystem::create_directories(path);
     return path;
 }
@@ -86,15 +86,15 @@ std::vector<unsigned char> bytes(const std::string& s) {
 
 /// True when the test should wait for a keypress before exiting: only for an
 /// interactive console (double-click or a terminal window). Piped/redirected
-/// runs (CTest, CI) skip the pause, and OBSIDIAN_GUARD_NO_PAUSE forces it off.
+/// runs (CTest, CI) skip the pause, and CRYPTO_LITE_NO_PAUSE forces it off.
 bool pauseRequested() {
 #if defined(_WIN32)
-    if (std::getenv("OBSIDIAN_GUARD_NO_PAUSE") != nullptr) {
+    if (std::getenv("CRYPTO_LITE_NO_PAUSE") != nullptr) {
         return false;
     }
     return _isatty(_fileno(stdin)) != 0;
 #else
-    return std::getenv("OBSIDIAN_GUARD_NO_PAUSE") == nullptr;
+    return std::getenv("CRYPTO_LITE_NO_PAUSE") == nullptr;
 #endif
 }
 
@@ -104,16 +104,16 @@ bool pauseRequested() {
 void testAes() {
     std::cout << "\n[AES-256-GCM]\n";
 
-    ObsidianGuardLite::Aes256 aes;
+    CryptoLite::Aes256 aes;
     std::vector<unsigned char> out;
 
     // No key yet -> kErrInvalidArgument.
-    CHECK(aes.encrypt(bytes("x"), out) == ObsidianGuardLite::Aes256::kErrInvalidArgument,
+    CHECK(aes.encrypt(bytes("x"), out) == CryptoLite::Aes256::kErrInvalidArgument,
           "AES: encrypt without key returns -1");
 
     CHECK(aes.generateKey() == 0, "AES: generate key returns 0");
     CHECK(aes.hasKey(), "AES: hasKey() after generate");
-    CHECK(aes.getKey().size() == ObsidianGuardLite::Aes256::kKeySize,
+    CHECK(aes.getKey().size() == CryptoLite::Aes256::kKeySize,
           "AES: getKey() returns a 32-byte copy");
 
     const auto plain = bytes("The quick brown fox jumps over the lazy dog");
@@ -121,43 +121,43 @@ void testAes() {
     std::vector<unsigned char> recovered;
 
     CHECK(aes.encrypt(plain, cipher) == 0, "AES: encrypt returns 0");
-    CHECK(cipher.size() == plain.size() + ObsidianGuardLite::Aes256::kIvSize +
-                                 ObsidianGuardLite::Aes256::kTagSize,
+    CHECK(cipher.size() == plain.size() + CryptoLite::Aes256::kIvSize +
+                                 CryptoLite::Aes256::kTagSize,
           "AES: ciphertext size = plaintext + IV + tag");
     CHECK(aes.decrypt(cipher, recovered) == 0, "AES: decrypt returns 0");
     CHECK(recovered == plain, "AES: round-trip matches");
 
     // Copy the key in memory (setKey) and decrypt with it.
-    ObsidianGuardLite::Aes256 aes2;
+    CryptoLite::Aes256 aes2;
     CHECK(aes2.setKey(aes.getKey()) == 0, "AES: setKey returns 0");
     recovered.clear();
     CHECK(aes2.decrypt(cipher, recovered) == 0, "AES: decrypt with copied key");
     CHECK(recovered == plain, "AES: round-trip matches with copied key");
 
     // setKey with the wrong size -> kErrInvalidArgument.
-    CHECK(aes2.setKey(bytes("too short")) == ObsidianGuardLite::Aes256::kErrInvalidArgument,
+    CHECK(aes2.setKey(bytes("too short")) == CryptoLite::Aes256::kErrInvalidArgument,
           "AES: setKey wrong size returns -1");
 
     // Malformed ciphertext (shorter than IV + tag) -> kErrInvalidArgument.
     recovered.clear();
     CHECK(aes.decrypt(bytes("tiny"), recovered) ==
-              ObsidianGuardLite::Aes256::kErrInvalidArgument,
+              CryptoLite::Aes256::kErrInvalidArgument,
           "AES: truncated ciphertext returns -1");
     CHECK(recovered.empty(), "AES: no output on malformed input");
 
     // Wrong key -> kErrAuth.
-    ObsidianGuardLite::Aes256 wrong;
+    CryptoLite::Aes256 wrong;
     CHECK(wrong.generateKey() == 0, "AES: generate wrong key");
     recovered.clear();
-    CHECK(wrong.decrypt(cipher, recovered) == ObsidianGuardLite::Aes256::kErrAuth,
+    CHECK(wrong.decrypt(cipher, recovered) == CryptoLite::Aes256::kErrAuth,
           "AES: wrong key returns -3");
     CHECK(recovered.empty(), "AES: no plaintext leaked on failure");
 
     // Corrupted ciphertext -> kErrAuth.
     auto tampered = cipher;
-    tampered[ObsidianGuardLite::Aes256::kIvSize] ^= 0x01; // flip one ciphertext byte
+    tampered[CryptoLite::Aes256::kIvSize] ^= 0x01; // flip one ciphertext byte
     recovered.clear();
-    CHECK(aes.decrypt(tampered, recovered) == ObsidianGuardLite::Aes256::kErrAuth,
+    CHECK(aes.decrypt(tampered, recovered) == CryptoLite::Aes256::kErrAuth,
           "AES: tampered ciphertext returns -3");
     CHECK(recovered.empty(), "AES: no plaintext leaked on failure");
 
@@ -173,12 +173,12 @@ void testAes() {
     auto wrongAad = aad;
     wrongAad[0] ^= 0x01;
     recovered.clear();
-    CHECK(aes.decrypt(aadCipher, wrongAad, recovered) == ObsidianGuardLite::Aes256::kErrAuth,
+    CHECK(aes.decrypt(aadCipher, wrongAad, recovered) == CryptoLite::Aes256::kErrAuth,
           "AES: wrong AAD returns -3");
     CHECK(recovered.empty(), "AES: no output on wrong AAD");
     recovered.clear();
     CHECK(aes.decrypt(aadCipher, bytes(""), recovered) ==
-              ObsidianGuardLite::Aes256::kErrAuth,
+              CryptoLite::Aes256::kErrAuth,
           "AES: missing AAD returns -3");
 
     // Empty AAD behaves exactly like the no-AAD overload.
@@ -198,17 +198,17 @@ void testRsa() {
     std::cout << "\n[RSA-4096 / OAEP-SHA256]\n";
     const auto dir = makeTempDir();
 
-    ObsidianGuardLite::Rsa4096 rsa;
+    CryptoLite::Rsa4096 rsa;
     std::vector<unsigned char> out;
 
-    CHECK(rsa.encrypt(bytes("x"), out) == ObsidianGuardLite::Rsa4096::kErrInvalidArgument,
+    CHECK(rsa.encrypt(bytes("x"), out) == CryptoLite::Rsa4096::kErrInvalidArgument,
           "RSA: encrypt without key returns -1");
 
     // File I/O errors -> kErrFile (-6).
     const auto missing = (dir / "does_not_exist.pem").string();
-    CHECK(rsa.loadPublicKey(missing) == ObsidianGuardLite::Rsa4096::kErrFile,
+    CHECK(rsa.loadPublicKey(missing) == CryptoLite::Rsa4096::kErrFile,
           "RSA: loadPublicKey(missing file) returns -6");
-    CHECK(rsa.loadPrivateKey(missing) == ObsidianGuardLite::Rsa4096::kErrFile,
+    CHECK(rsa.loadPrivateKey(missing) == CryptoLite::Rsa4096::kErrFile,
           "RSA: loadPrivateKey(missing file) returns -6");
 
     std::cout << "  (generating a 4096-bit RSA key, this can take a few seconds...)\n";
@@ -218,7 +218,7 @@ void testRsa() {
 
     // Save to an unwritable path -> kErrFile (-6) (needs a key first).
     const auto badPath = (dir / "no_such_subdir" / "x.pem").string();
-    CHECK(rsa.savePublicKey(badPath) == ObsidianGuardLite::Rsa4096::kErrFile,
+    CHECK(rsa.savePublicKey(badPath) == CryptoLite::Rsa4096::kErrFile,
           "RSA: savePublicKey(unwritable path) returns -6");
 
     const auto plain = bytes("Confidential RSA message");
@@ -226,21 +226,21 @@ void testRsa() {
     std::vector<unsigned char> recovered;
 
     CHECK(rsa.encrypt(plain, cipher) == 0, "RSA: encrypt returns 0");
-    CHECK(cipher.size() == ObsidianGuardLite::Rsa4096::kModulusSize,
+    CHECK(cipher.size() == CryptoLite::Rsa4096::kModulusSize,
           "RSA: ciphertext is 512 bytes");
     CHECK(rsa.decrypt(cipher, recovered) == 0, "RSA: decrypt returns 0");
     CHECK(recovered == plain, "RSA: round-trip matches");
 
     // Oversized plaintext -> kErrInvalidArgument.
-    std::vector<unsigned char> tooBig(ObsidianGuardLite::Rsa4096::kMaxPlaintext + 1, 'a');
+    std::vector<unsigned char> tooBig(CryptoLite::Rsa4096::kMaxPlaintext + 1, 'a');
     cipher.clear();
-    CHECK(rsa.encrypt(tooBig, cipher) == ObsidianGuardLite::Rsa4096::kErrInvalidArgument,
+    CHECK(rsa.encrypt(tooBig, cipher) == CryptoLite::Rsa4096::kErrInvalidArgument,
           "RSA: oversized plaintext returns -1");
 
     // Wrong-size ciphertext -> kErrInvalidArgument.
     recovered.clear();
     CHECK(rsa.decrypt(bytes("short"), recovered) ==
-              ObsidianGuardLite::Rsa4096::kErrInvalidArgument,
+              CryptoLite::Rsa4096::kErrInvalidArgument,
           "RSA: wrong-size ciphertext returns -1");
 
     // Corrupted ciphertext -> OAEP padding error -> kErrOpenSsl (-2), NOT -3.
@@ -249,7 +249,7 @@ void testRsa() {
     auto tampered = cipher;
     tampered[tampered.size() / 2] ^= 0xFF;
     recovered.clear();
-    CHECK(rsa.decrypt(tampered, recovered) == ObsidianGuardLite::Rsa4096::kErrOpenSsl,
+    CHECK(rsa.decrypt(tampered, recovered) == CryptoLite::Rsa4096::kErrOpenSsl,
           "RSA: corrupted ciphertext returns -2 (padding error)");
     CHECK(recovered.empty(), "RSA: no plaintext leaked on failure");
 
@@ -259,8 +259,8 @@ void testRsa() {
     CHECK(rsa.savePublicKey(pubPath) == 0, "RSA: save public key returns 0");
     CHECK(rsa.savePrivateKey(privPath) == 0, "RSA: save private key returns 0");
 
-    ObsidianGuardLite::Rsa4096 pub;
-    ObsidianGuardLite::Rsa4096 priv;
+    CryptoLite::Rsa4096 pub;
+    CryptoLite::Rsa4096 priv;
     CHECK(pub.loadPublicKey(pubPath) == 0, "RSA: load public key returns 0");
     CHECK(priv.loadPrivateKey(privPath) == 0, "RSA: load private key returns 0");
     CHECK(pub.hasPublicKey() && !pub.hasPrivateKey(), "RSA: public-only object");
@@ -273,12 +273,12 @@ void testRsa() {
 
     // Public-only object cannot decrypt -> kErrInvalidArgument.
     recovered.clear();
-    CHECK(pub.decrypt(cipher, recovered) == ObsidianGuardLite::Rsa4096::kErrInvalidArgument,
+    CHECK(pub.decrypt(cipher, recovered) == CryptoLite::Rsa4096::kErrInvalidArgument,
           "RSA: public key cannot decrypt (-1)");
 
     // Public-only object cannot save a private key -> kErrInvalidArgument.
     CHECK(pub.savePrivateKey((dir / "nope.pem").string()) ==
-              ObsidianGuardLite::Rsa4096::kErrInvalidArgument,
+              CryptoLite::Rsa4096::kErrInvalidArgument,
           "RSA: savePrivateKey without private key returns -1");
 
     std::filesystem::remove_all(dir);
@@ -291,23 +291,23 @@ void testPostQuantum() {
     std::cout << "\n[Post-Quantum ML-KEM-768 + AES-256-GCM]\n";
     const auto dir = makeTempDir();
 
-    ObsidianGuardLite::PostQuantum pq;
+    CryptoLite::PostQuantum pq;
     std::vector<unsigned char> out;
 
-    CHECK(pq.encrypt(bytes("x"), out) == ObsidianGuardLite::PostQuantum::kErrInvalidArgument,
+    CHECK(pq.encrypt(bytes("x"), out) == CryptoLite::PostQuantum::kErrInvalidArgument,
           "PQ: encrypt without key returns -1");
 
     // File I/O errors -> kErrFile (-6).
     const auto missing = (dir / "does_not_exist.pem").string();
-    CHECK(pq.loadPublicKey(missing) == ObsidianGuardLite::PostQuantum::kErrFile,
+    CHECK(pq.loadPublicKey(missing) == CryptoLite::PostQuantum::kErrFile,
           "PQ: loadPublicKey(missing file) returns -6");
 
     const int rc = pq.generateKeyPair();
-    if (rc == ObsidianGuardLite::PostQuantum::kErrUnavailable) {
+    if (rc == CryptoLite::PostQuantum::kErrUnavailable) {
         // OpenSSL built without ML-KEM: the aligned Unavailable code (-4).
         std::cout << "  (ML-KEM not available in this OpenSSL build;"
                      " checking the unavailable-code contract)\n";
-        CHECK(rc == ObsidianGuardLite::PostQuantum::kErrUnavailable,
+        CHECK(rc == CryptoLite::PostQuantum::kErrUnavailable,
               "PQ: generateKeyPair returns -4 when ML-KEM is unavailable");
         std::filesystem::remove_all(dir);
         return;
@@ -318,7 +318,7 @@ void testPostQuantum() {
 
     // Save to an unwritable path -> kErrFile (-6) (needs a key first).
     CHECK(pq.savePublicKey((dir / "no_such_subdir" / "x.pem").string()) ==
-              ObsidianGuardLite::PostQuantum::kErrFile,
+              CryptoLite::PostQuantum::kErrFile,
           "PQ: savePublicKey(unwritable path) returns -6");
 
     const auto plain = bytes("A post-quantum encrypted message");
@@ -333,7 +333,7 @@ void testPostQuantum() {
     // Malformed ciphertext (shorter than the header + IV + tag) -> -1.
     recovered.clear();
     CHECK(pq.decrypt(bytes("tiny"), recovered) ==
-              ObsidianGuardLite::PostQuantum::kErrInvalidArgument,
+              CryptoLite::PostQuantum::kErrInvalidArgument,
           "PQ: truncated ciphertext returns -1");
 
     // Save / load keys.
@@ -342,8 +342,8 @@ void testPostQuantum() {
     CHECK(pq.savePublicKey(pubPath) == 0, "PQ: save public key returns 0");
     CHECK(pq.savePrivateKey(privPath) == 0, "PQ: save private key returns 0");
 
-    ObsidianGuardLite::PostQuantum pub;
-    ObsidianGuardLite::PostQuantum priv;
+    CryptoLite::PostQuantum pub;
+    CryptoLite::PostQuantum priv;
     CHECK(pub.loadPublicKey(pubPath) == 0, "PQ: load public key returns 0");
     CHECK(priv.loadPrivateKey(privPath) == 0, "PQ: load private key returns 0");
 
@@ -357,14 +357,14 @@ void testPostQuantum() {
     auto tampered = cipher;
     tampered[tampered.size() / 2] ^= 0x01;
     recovered.clear();
-    CHECK(pq.decrypt(tampered, recovered) == ObsidianGuardLite::PostQuantum::kErrAuth,
+    CHECK(pq.decrypt(tampered, recovered) == CryptoLite::PostQuantum::kErrAuth,
           "PQ: tampered ciphertext returns -3");
 
     // A different private key -> kErrAuth.
-    ObsidianGuardLite::PostQuantum other;
+    CryptoLite::PostQuantum other;
     CHECK(other.generateKeyPair() == 0, "PQ: generate a second key pair");
     recovered.clear();
-    CHECK(other.decrypt(cipher, recovered) == ObsidianGuardLite::PostQuantum::kErrAuth,
+    CHECK(other.decrypt(cipher, recovered) == CryptoLite::PostQuantum::kErrAuth,
           "PQ: wrong key returns -3");
 
     std::filesystem::remove_all(dir);
@@ -376,7 +376,7 @@ void testPostQuantum() {
 void testAesThreads() {
     std::cout << "\n[AES thread safety (one shared instance)]\n";
 
-    ObsidianGuardLite::Aes256 shared;
+    CryptoLite::Aes256 shared;
     CHECK(shared.generateKey() == 0, "AES threads: setup key");
     const auto key = shared.getKey();
 
@@ -441,7 +441,7 @@ void testAesThreads() {
                             ++failures;
                             return;
                         }
-                    } else if (rc == ObsidianGuardLite::Aes256::kErrAuth) {
+                    } else if (rc == CryptoLite::Aes256::kErrAuth) {
                         if (!recovered.empty()) {
                             ++failures;
                             return;
@@ -480,7 +480,7 @@ void testAesThreads() {
 void testRsaThreads() {
     std::cout << "\n[RSA thread safety (one shared instance)]\n";
 
-    ObsidianGuardLite::Rsa4096 shared;
+    CryptoLite::Rsa4096 shared;
     CHECK(shared.generateKeyPair() == 0, "RSA threads: setup key");
     const auto dir = makeTempDir();
     const auto privPath = (dir / "rsa_priv.pem").string();
@@ -525,9 +525,9 @@ void testRsaThreads() {
 void testPostQuantumThreads() {
     std::cout << "\n[PostQuantum thread safety (one shared instance)]\n";
 
-    ObsidianGuardLite::PostQuantum shared;
+    CryptoLite::PostQuantum shared;
     const int rc = shared.generateKeyPair();
-    if (rc == ObsidianGuardLite::PostQuantum::kErrUnavailable) {
+    if (rc == CryptoLite::PostQuantum::kErrUnavailable) {
         std::cout << "  (ML-KEM not available; skipping the PQ thread test)\n";
         return;
     }
@@ -574,7 +574,7 @@ void testPostQuantumThreads() {
 } // namespace
 
 int main() {
-    std::cout << "ObsidianGuardLite unit tests\n";
+    std::cout << "CryptoLite unit tests\n";
     std::cout << "OpenSSL " << OPENSSL_VERSION_TEXT << "\n";
 
     testAes();
