@@ -73,6 +73,17 @@ public:
     int decrypt(const std::vector<unsigned char>& ciphertext,
                 std::vector<unsigned char>& plaintext) const;
 
+    // AAD overloads: bind associated data (headers, IDs, metadata) into the
+    // GCM tag. AAD is authenticated but not encrypted; tampering with either
+    // the ciphertext or the AAD is detected at decryption (kErrAuth). The
+    // ciphertext layout is unchanged: [12-byte IV][ciphertext][16-byte tag].
+    int encrypt(const std::vector<unsigned char>& plaintext,
+                const std::vector<unsigned char>& aad,
+                std::vector<unsigned char>& ciphertext) const;
+    int decrypt(const std::vector<unsigned char>& ciphertext,
+                const std::vector<unsigned char>& aad,
+                std::vector<unsigned char>& plaintext) const;
+
 private:
     void clearKey();  // call only with mutex_ held (or during destruction)
 

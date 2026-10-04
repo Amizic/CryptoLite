@@ -21,13 +21,32 @@ destruction.
 
 ---
 
+## ObsidianGuardLite vs ObsidianGuard
+
+This workspace ships two related libraries. Both implement the same
+algorithms (AES-256-GCM, RSA-4096, ML-KEM-768) with aligned return codes and
+naming. They differ in one design decision — key ownership:
+
+* **ObsidianGuardLite (this one)** — each object **owns its key** (stored
+  inside, non-copyable, mutex-protected) and can save/load it to PEM files.
+  Self-contained: create one object per client and the key travels with it.
+* **ObsidianGuard** — a **stateless, lock-free engine**: keys are passed in
+  as byte vectors per call and live in *your* data structures. Built for
+  high-throughput servers managing many clients and threads.
+
+Pick **Lite** for simple, self-contained objects that carry their own keys;
+pick **ObsidianGuard** when your application owns the key lifecycle and
+wants zero locking overhead.
+
+---
+
 ## Return codes
 
 Every function that performs work returns an `int`. **`0` means success**; any
 negative value is an error. `hasKey()`, `hasPublicKey()`, `hasPrivateKey()` and
 `getKey()` are the only exceptions (they are queries, not operations).
 
-The codes are aligned with ObsidianGuard's `CryptoErrorCode` categories, so the
+The codes are aligned with ObsidianGuard's `kOk` / `kErr*` return codes, so the
 same number means the same thing in both libraries:
 
 | Code | Constant                | Meaning                                                          | Used by |
@@ -134,6 +153,8 @@ The 256-bit key lives **only in memory** and is never written to disk.
 | `getKey()` | `vector` | Copy of the key bytes (by value, thread-safe snapshot). |
 | `encrypt(in, out)` | `int` | Encrypt `in` into `out`. |
 | `decrypt(in, out)` | `int` | Decrypt `in` into `out`. |
+| `encrypt(in, aad, out)` | `int` | Encrypt, binding `aad` (headers/metadata) into the tag. |
+| `decrypt(in, aad, out)` | `int` | Decrypt with the same `aad` that was bound at encryption. |
 
 **Ciphertext layout** (binary): `[ 12-byte IV ][ ciphertext ][ 16-byte tag ]`
 
@@ -307,7 +328,12 @@ target_link_libraries(my_app PRIVATE ObsidianGuardLite::ObsidianGuardLite)
 ## Security notes
 
 - **AES** uses AES-256-**GCM** (confidentiality + integrity); tampered data is
-  rejected with `-3`.
+  rejected with `-3`. The IV (nonce) is generated randomly inside `encrypt()`
+  for every message and prepended to the ciphertext, so it can never be
+  reused by accident. With random 96-bit IVs the collision risk becomes
+  meaningful only after ~2³² messages under one key — rotate keys at extreme
+  volume. AAD overloads (`encrypt(in, aad, out)` / `decrypt(in, aad, out)`)
+  bind headers/metadata into the tag.
 - **RSA** uses **OAEP** with SHA-256/MGF1-SHA256 (not the weaker PKCS#1 v1.5).
 - **Post-quantum** uses **ML-KEM-768** (FIPS 203 / NIST category 3) plus
   AES-256-GCM. The 32-byte shared secret is used directly as the AES key.

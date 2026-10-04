@@ -160,6 +160,35 @@ void testAes() {
     CHECK(aes.decrypt(tampered, recovered) == ObsidianGuardLite::Aes256::kErrAuth,
           "AES: tampered ciphertext returns -3");
     CHECK(recovered.empty(), "AES: no plaintext leaked on failure");
+
+    // AAD overloads: bind associated data into the tag.
+    const auto aad = bytes("header-metadata");
+    std::vector<unsigned char> aadCipher;
+    recovered.clear();
+    CHECK(aes.encrypt(plain, aad, aadCipher) == 0, "AES: encrypt with AAD returns 0");
+    CHECK(aes.decrypt(aadCipher, aad, recovered) == 0, "AES: decrypt with AAD returns 0");
+    CHECK(recovered == plain, "AES: AAD round-trip matches");
+
+    // Wrong / missing AAD -> kErrAuth, no output.
+    auto wrongAad = aad;
+    wrongAad[0] ^= 0x01;
+    recovered.clear();
+    CHECK(aes.decrypt(aadCipher, wrongAad, recovered) == ObsidianGuardLite::Aes256::kErrAuth,
+          "AES: wrong AAD returns -3");
+    CHECK(recovered.empty(), "AES: no output on wrong AAD");
+    recovered.clear();
+    CHECK(aes.decrypt(aadCipher, bytes(""), recovered) ==
+              ObsidianGuardLite::Aes256::kErrAuth,
+          "AES: missing AAD returns -3");
+
+    // Empty AAD behaves exactly like the no-AAD overload.
+    std::vector<unsigned char> plainCipher;
+    recovered.clear();
+    CHECK(aes.encrypt(plain, bytes(""), plainCipher) == 0,
+          "AES: encrypt with empty AAD returns 0");
+    CHECK(aes.decrypt(plainCipher, recovered) == 0,
+          "AES: empty-AAD ciphertext decrypts without AAD");
+    CHECK(recovered == plain, "AES: empty-AAD round-trip matches");
 }
 
 // ---------------------------------------------------------------------------

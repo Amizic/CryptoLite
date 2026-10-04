@@ -4,6 +4,7 @@
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 
+#include <climits>
 #include <mutex>
 
 namespace ObsidianGuardLite {
@@ -57,6 +58,12 @@ std::vector<unsigned char> Aes256::getKey() const {
 
 int Aes256::encrypt(const std::vector<unsigned char>& plaintext,
                     std::vector<unsigned char>& ciphertext) const {
+    return encrypt(plaintext, std::vector<unsigned char>(), ciphertext);
+}
+
+int Aes256::encrypt(const std::vector<unsigned char>& plaintext,
+                    const std::vector<unsigned char>& aad,
+                    std::vector<unsigned char>& ciphertext) const {
     ciphertext.clear();
 
     // Snapshot the key under the lock so concurrent generateKey()/setKey()
@@ -68,6 +75,10 @@ int Aes256::encrypt(const std::vector<unsigned char>& plaintext,
             return kErrInvalidArgument;
         }
         key = key_;
+    }
+
+    if (aad.size() > static_cast<std::size_t>(INT_MAX)) {
+        return kErrInvalidArgument;
     }
 
     std::vector<unsigned char> iv(kIvSize, 0);
@@ -96,6 +107,15 @@ int Aes256::encrypt(const std::vector<unsigned char>& plaintext,
         }
         if (EVP_EncryptInit_ex(ctx, nullptr, nullptr, key.data(), iv.data()) != 1) {
             break;
+        }
+        // Associated data is authenticated but not encrypted; it must be fed
+        // before any plaintext.
+        if (!aad.empty()) {
+            int aadLen = 0;
+            if (EVP_EncryptUpdate(ctx, nullptr, &aadLen, aad.data(),
+                                  static_cast<int>(aad.size())) != 1) {
+                break;
+            }
         }
         if (!plaintext.empty() &&
             EVP_EncryptUpdate(ctx, ct.data(), &outLen, plaintext.data(),
@@ -128,6 +148,12 @@ int Aes256::encrypt(const std::vector<unsigned char>& plaintext,
 
 int Aes256::decrypt(const std::vector<unsigned char>& ciphertext,
                     std::vector<unsigned char>& plaintext) const {
+    return decrypt(ciphertext, std::vector<unsigned char>(), plaintext);
+}
+
+int Aes256::decrypt(const std::vector<unsigned char>& ciphertext,
+                    const std::vector<unsigned char>& aad,
+                    std::vector<unsigned char>& plaintext) const {
     plaintext.clear();
 
     // Snapshot the key under the lock (see encrypt()).
@@ -141,6 +167,9 @@ int Aes256::decrypt(const std::vector<unsigned char>& ciphertext,
     }
 
     if (ciphertext.size() < kIvSize + kTagSize) {
+        return kErrInvalidArgument;
+    }
+    if (aad.size() > static_cast<std::size_t>(INT_MAX)) {
         return kErrInvalidArgument;
     }
 
@@ -169,6 +198,14 @@ int Aes256::decrypt(const std::vector<unsigned char>& ciphertext,
         }
         if (EVP_DecryptInit_ex(ctx, nullptr, nullptr, key.data(), iv) != 1) {
             break;
+        }
+        // Feed the same associated data that was bound at encryption.
+        if (!aad.empty()) {
+            int aadLen = 0;
+            if (EVP_DecryptUpdate(ctx, nullptr, &aadLen, aad.data(),
+                                  static_cast<int>(aad.size())) != 1) {
+                break;
+            }
         }
         if (ctLen > 0 &&
             EVP_DecryptUpdate(ctx, out.data(), &outLen, ct,
