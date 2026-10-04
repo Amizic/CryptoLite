@@ -1,6 +1,6 @@
 # CryptoLite
 
-A small, clean **Windows C++17 wrapper around OpenSSL** with exactly three
+A small, clean **Windows C++17 wrapper around OpenSSL** with exactly four
 classes:
 
 | Class                    | Purpose                          | Underlying OpenSSL primitive     |
@@ -8,10 +8,11 @@ classes:
 | `CryptoLite::Aes256`      | Symmetric encryption             | AES-256-GCM (authenticated)      |
 | `CryptoLite::Rsa4096`     | Asymmetric public-key encryption | RSA-4096 with OAEP-SHA256        |
 | `CryptoLite::PostQuantum` | Post-quantum hybrid encryption   | ML-KEM-768 (Kyber) + AES-256-GCM |
+| `CryptoLite::Sha256`      | One-shot hashing                 | SHA-256 / SHA-512                |
 
-Every class has the same shape of API: generate keys, save/load keys
-(asymmetric only), encrypt, decrypt, and automatic memory cleanup on
-destruction.
+Aes256, Rsa4096 and PostQuantum share the same API shape: generate keys,
+save/load keys (asymmetric only), encrypt, decrypt, and automatic memory
+cleanup on destruction. Sha256 is a stateless one-shot hasher.
 
 > **Requirements**
 > - Windows with a C++17 compiler (MinGW-w64 GCC or MSVC).
@@ -78,9 +79,10 @@ if (rc == CryptoLite::Aes256::kErrAuth) { /* wrong key or tampered data */ }
 
 ## Thread safety
 
-All three classes are fully thread-safe: every method locks internally, and a
-single instance may be shared freely between threads — including concurrent
-key changes.
+Aes256, Rsa4096 and PostQuantum are fully thread-safe: every method locks
+internally, and a single instance may be shared freely between threads —
+including concurrent key changes. Sha256 is stateless, so it is trivially
+thread-safe with no locking at all.
 
 * `Aes256::encrypt()` / `decrypt()` copy the 32-byte key under the lock and
   run the crypto on that snapshot.
@@ -101,14 +103,16 @@ another thread is still using it.
 CryptoLite/
 ├── CMakeLists.txt          # build script (static + shared)
 ├── README.md
-├── include/                # the three headers (.hpp)
+├── include/                # the four headers (.hpp)
 │   ├── Aes256.hpp
 │   ├── Rsa4096.hpp
-│   └── PostQuantum.hpp
-├── src/                    # the three implementations (.cpp)
+│   ├── PostQuantum.hpp
+│   └── Sha256.hpp
+├── src/                    # the four implementations (.cpp)
 │   ├── Aes256.cpp
 │   ├── Rsa4096.cpp
-│   └── PostQuantum.cpp
+│   ├── PostQuantum.cpp
+│   └── Sha256.cpp
 ├── scripts/
 │   └── build.ps1           # one-command build (+ -Test runs ctest)
 └── tests/
@@ -119,9 +123,11 @@ CryptoLite/
 
 ## Class reference
 
-All classes live in the `CryptoLite` namespace. They are **non-copyable and
-non-movable** because each one exclusively owns its key material, and they are
-**thread-safe**: all methods lock internally (see "Thread safety" above).
+All classes live in the `CryptoLite` namespace. `Aes256`, `Rsa4096` and
+`PostQuantum` are **non-copyable and non-movable** because each one exclusively
+owns its key material, and they are **thread-safe**: all methods lock
+internally (see "Thread safety" above). `Sha256` is stateless and trivially
+thread-safe.
 
 ### `CryptoLite::Aes256` — AES-256-GCM
 
@@ -221,6 +227,26 @@ this OpenSSL build has no ML-KEM support), `savePublicKey()`/`loadPublicKey()`,
 [ 4-byte little-endian KEM ciphertext length ][ KEM ciphertext ]
 [ AES-256-GCM ciphertext: 12-byte IV ][ data ][ 16-byte tag ]
 ```
+
+### `CryptoLite::Sha256` — SHA-256 / SHA-512
+
+One-shot hashing. The class is stateless (no key material, no mutex), so a
+single instance may be shared freely between threads.
+
+**Public constants**
+
+| Constant         | Value | Meaning              |
+|------------------|-------|----------------------|
+| `kDigestSize`    | 32    | SHA-256 digest bytes |
+| `kDigest512Size` | 64    | SHA-512 digest bytes |
+
+**Functions**
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `algorithmName()` | `const char*` | `"SHA-256 / SHA-512"` |
+| `hash(in, out)` | `int` | SHA-256 of `in` into `out` (32 bytes; empty input is valid). |
+| `hash512(in, out)` | `int` | SHA-512 of `in` into `out` (64 bytes; empty input is valid). |
 
 ---
 
@@ -340,8 +366,9 @@ target_link_libraries(my_app PRIVATE CryptoLite::CryptoLite)
 - The AES key is kept **in memory only**; it is never written to disk. RSA/PQ
   public keys are meant to be shared (hence PEM files); their private keys are
   saved unencrypted for simplicity, so protect those files.
-- All classes **cleanse key material from memory** on destruction and when keys
-  are replaced (`OPENSSL_cleanse`), and free their OpenSSL handles.
+- The key-owning classes **cleanse key material from memory** on destruction
+  and when keys are replaced (`OPENSSL_cleanse`), and free their OpenSSL
+  handles.
 - With this workspace's OpenSSL 3.5.9 (built `no-shared`), OpenSSL is linked
   statically into the library and test executable, so no `libcrypto-3-x64.dll`
   is needed at runtime — only the MinGW runtime DLLs shipped next to the

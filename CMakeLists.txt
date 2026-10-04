@@ -30,6 +30,7 @@ add_library(CryptoLite
     src/Aes256.cpp
     src/Rsa4096.cpp
     src/PostQuantum.cpp
+    src/Sha256.cpp
 )
 add_library(CryptoLite::CryptoLite ALIAS CryptoLite)
 

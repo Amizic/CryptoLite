@@ -15,6 +15,7 @@
 #include "Aes256.hpp"
 #include "Rsa4096.hpp"
 #include "PostQuantum.hpp"
+#include "Sha256.hpp"
 
 #include <openssl/opensslv.h>
 
@@ -45,10 +46,13 @@ static_assert(CryptoLite::Aes256::kErrUnavailable == -4,
               "kErrUnavailable must be -4");
 static_assert(CryptoLite::Aes256::kErrInternal == -5, "kErrInternal must be -5");
 static_assert(CryptoLite::Aes256::kErrFile == -6, "kErrFile must be -6");
-// The same values must be exposed by all three classes.
+// The same values must be exposed by every class.
 static_assert(CryptoLite::Rsa4096::kErrOpenSsl ==
                   CryptoLite::Aes256::kErrOpenSsl,
               "RSA and AES must share the aligned codes");
+static_assert(CryptoLite::Sha256::kErrOpenSsl ==
+                  CryptoLite::Aes256::kErrOpenSsl,
+              "SHA and AES must share the aligned codes");
 static_assert(CryptoLite::PostQuantum::kErrUnavailable ==
                   CryptoLite::Aes256::kErrUnavailable,
               "PostQuantum and AES must share the aligned codes");
@@ -371,6 +375,54 @@ void testPostQuantum() {
 }
 
 // ---------------------------------------------------------------------------
+// SHA-256 / SHA-512 (known-answer vectors)
+// ---------------------------------------------------------------------------
+void testSha() {
+    std::cout << "\n[SHA-256 / SHA-512]\n";
+
+    CryptoLite::Sha256 sha;
+    std::vector<unsigned char> digest;
+
+    CHECK(std::string(sha.algorithmName()) == "SHA-256 / SHA-512",
+          "SHA: algorithmName()");
+
+    // FIPS 180-4 known-answer vectors for "abc".
+    const auto abc = bytes("abc");
+    const std::vector<unsigned char> sha256Abc = {
+        0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40,
+        0xde, 0x5d, 0xae, 0x22, 0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17,
+        0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad};
+    const std::vector<unsigned char> sha512Abc = {
+        0xdd, 0xaf, 0x35, 0xa1, 0x93, 0x61, 0x7a, 0xba, 0xcc, 0x41, 0x73,
+        0x49, 0xae, 0x20, 0x41, 0x31, 0x12, 0xe6, 0xfa, 0x4e, 0x89, 0xa9,
+        0x7e, 0xa2, 0x0a, 0x9e, 0xee, 0xe6, 0x4b, 0x55, 0xd3, 0x9a, 0x21,
+        0x92, 0x99, 0x2a, 0x27, 0x4f, 0xc1, 0xa8, 0x36, 0xba, 0x3c, 0x23,
+        0xa3, 0xfe, 0xeb, 0xbd, 0x45, 0x4d, 0x44, 0x23, 0x64, 0x3c, 0xe8,
+        0x0e, 0x2a, 0x9a, 0xc9, 0x4f, 0xa5, 0x4c, 0xa4, 0x9f};
+
+    CHECK(sha.hash(abc, digest) == 0, "SHA: hash returns 0");
+    CHECK(digest.size() == CryptoLite::Sha256::kDigestSize,
+          "SHA: SHA-256 digest is 32 bytes");
+    CHECK(digest == sha256Abc, "SHA: SHA-256('abc') known-answer vector");
+
+    CHECK(sha.hash512(abc, digest) == 0, "SHA: hash512 returns 0");
+    CHECK(digest.size() == CryptoLite::Sha256::kDigest512Size,
+          "SHA: SHA-512 digest is 64 bytes");
+    CHECK(digest == sha512Abc, "SHA: SHA-512('abc') known-answer vector");
+
+    // Empty input is valid and deterministic.
+    std::vector<unsigned char> emptyDigest;
+    CHECK(sha.hash(std::vector<unsigned char>(), emptyDigest) == 0,
+          "SHA: hash of empty input returns 0");
+    CHECK(emptyDigest.size() == CryptoLite::Sha256::kDigestSize,
+          "SHA: empty-input SHA-256 is 32 bytes");
+    CHECK(sha.hash512(std::vector<unsigned char>(), emptyDigest) == 0,
+          "SHA: hash512 of empty input returns 0");
+    CHECK(emptyDigest.size() == CryptoLite::Sha256::kDigest512Size,
+          "SHA: empty-input SHA-512 is 64 bytes");
+}
+
+// ---------------------------------------------------------------------------
 // Thread safety: one shared instance, many threads
 // ---------------------------------------------------------------------------
 void testAesThreads() {
@@ -580,6 +632,7 @@ int main() {
     testAes();
     testRsa();
     testPostQuantum();
+    testSha();
     testAesThreads();
     testRsaThreads();
     testPostQuantumThreads();
